@@ -16,10 +16,13 @@
 
 
 import numbers
+import logging
 
 from panoramix.core.variants import variants
 from panoramix.matcher import Any, match
 from panoramix.utils.helpers import EasyCopy, all_concrete, cached, opcode, to_exp2
+
+logger = logging.getLogger(__name__)
 
 
 class CannotCompare(Exception):
@@ -33,18 +36,17 @@ def mask_to_int(size, offset):
         size = size + offset
         if size < 1:
             return 0
-        return 2 ** size - 1
+        return 2**size - 1
 
-    return (2 ** size - 1) * (2 ** offset)
+    return (2**size - 1) * (2**offset)
 
 
 @cached
 def simplify(exp):
-
     if opcode(exp) == "max":
         terms = exp[1:]
         els = [simplify(e) for e in terms]
-        res = -(2 ** 256)
+        res = -(2**256)
         for e in els:
             try:
                 res = max_op(res, e)
@@ -52,7 +54,7 @@ def simplify(exp):
                 return ("max",) + tuple(els)
         return res
 
-    if (m := match(exp, ("mask_shl", ":size", ":offset", ":shl", ":val"))) :
+    if m := match(exp, ("mask_shl", ":size", ":offset", ":shl", ":val")):
         size, offset, shl, val = (
             simplify(m.size),
             simplify(m.offset),
@@ -91,7 +93,7 @@ def calc_max(exp):
     exp = (opcode(exp),) + tuple(calc_max(e) for e in exp[1:])
 
     if opcode(exp) == "max":
-        m = -(2 ** 256)
+        m = -(2**256)
         for e in exp[1:]:
             if type(e) != int:
                 break
@@ -105,15 +107,15 @@ def calc_max(exp):
 @cached
 def add_ge_zero(exp):
     """
-        technically, it can return wrong results, e.g.:
+    technically, it can return wrong results, e.g.:
 
-        (sub (mask 4, 4, -4, 'sth') (mask 4, 0, 'sth'))
-        for sth 11...111 == 0
-        for sth 0 == 0
-        for sth 00010011 < 0
+    (sub (mask 4, 4, -4, 'sth') (mask 4, 0, 'sth'))
+    for sth 11...111 == 0
+    for sth 0 == 0
+    for sth 00010011 < 0
 
-        in practice it (hopefully) doesn't happen -- need to fix "variants"
-        to deliver more variants based on masks and other expressions?
+    in practice it (hopefully) doesn't happen -- need to fix "variants"
+    to deliver more variants based on masks and other expressions?
 
     """
 
@@ -140,7 +142,6 @@ def add_ge_zero(exp):
 
 
 def minus_op(exp):
-
     return mul_op(-1, exp)
 
 
@@ -160,7 +161,7 @@ def sub_op(left, right):
 def flatten_adds(exp):
     res = exp
 
-    while len([a for a in res if opcode(a) == "add"]) > 0:
+    while any(opcode(a) == "add" for a in res):
         exp = []
         for r in res:
             if opcode(r) == "add":
@@ -202,7 +203,7 @@ def max_to_add(exp):
 
             return ("add", m, res)
 
-    m = 10 ** 20
+    m = 10**20
     for e in exp:
         if type(e[1]) != int:
             m = 0
@@ -268,7 +269,7 @@ def add_op(*args):
     for r in res:
         assert opcode(r) != "add"
 
-        if type(r) in [int, float]:
+        if type(r) in (int, float):
             real += r
             continue
 
@@ -278,7 +279,6 @@ def add_op(*args):
         # perhaps you can add to the previous one - if so, do it
         # else, add this as a new symbolic exp
         for idx, rr in enumerate(symbolic):
-
             tried = try_add(r, rr) or try_add(rr, r)
 
             if tried:
@@ -287,7 +287,7 @@ def add_op(*args):
 
                 elif m := match(tried, ("mask_shl", ":int:size", 0, ":osize", ":val")):
                     assert m.osize == 256 - m.size
-                    symbolic[idx] = ("mul", 2 ** m.osize, m.val)
+                    symbolic[idx] = ("mul", 2**m.osize, m.val)
 
                 else:
                     m = match(tried, ("add", ":int:num", ":term"))
@@ -312,7 +312,7 @@ def add_op(*args):
         res = symbolic
     else:
         if real > 0:
-            real = real % (2 ** 256)
+            real = real % (2**256)
         res = (real,) + symbolic
 
     if len(res) == 0:
@@ -389,11 +389,13 @@ def mul_op(*args):
     if len(symbolic) == 0:
         return real
     else:
-        return ("mul", real,) + symbolic
+        return (
+            "mul",
+            real,
+        ) + symbolic
 
 
 def get_sign(exp):
-
     if exp == 0:
         return 0
 
@@ -442,7 +444,7 @@ def to_bytes(exp):
                 if bi == 0:
                     res.append(by)
                 else:
-                    raise NotImplementedError()
+                    raise NotImplementedError(exp)
 
             elif opcode(e) == "mul" and len(e) == 3:
                 if e[1] % 8 == 0:
@@ -450,10 +452,10 @@ def to_bytes(exp):
                 elif opcode(e[2]) == "mask_shl" and e[2][:4] == ("mask_shl", 253, 0, 3):
                     res.append(("mul", e[1], e[2][4]))
                 else:
-                    raise NotImplementedError()
+                    raise NotImplementedError(exp)
 
             else:
-                raise NotImplementedError()
+                raise NotImplementedError(exp)
 
         return ("add",) + tuple(res), 0
 
@@ -631,7 +633,6 @@ def simplify_max(exp):
 
 @cached
 def le_op(left, right):  # left <= right
-
     #    right = add_op(1, right)
     #    return lt_op(left, right)
 
@@ -785,9 +786,9 @@ def neg_mask_op(exp, size, offset):
 
 def strategy_concrete(size, offset, shl, exp_size, exp_offset, exp_shl, exp):
     """
-        This is an optimised version of strategy_1, the program would
-        work correctly without it, but much slower, since concrete values
-        for masks are very common
+    This is an optimised version of strategy_1, the program would
+    work correctly without it, but much slower, since concrete values
+    for masks are very common
     """
 
     outer_left = offset + size
@@ -879,7 +880,6 @@ def strategy_3(size, offset, shl, exp_size, exp_offset, exp_shl, exp):
 
 
 def strategy_final(size, offset, shl, exp_size, exp_offset, exp_shl, exp):
-
     return (
         "mask_shl",
         size,
@@ -1036,7 +1036,7 @@ def __try_add(self, other):
     ) and m.shl > 0:
         self = (
             "mul",
-            m.num + 2 ** m.shl,
+            m.num + 2**m.shl,
             ("mask_shl", m.size + m.shl, m.off, 0, m.val),
         )
 
@@ -1048,7 +1048,7 @@ def __try_add(self, other):
     ) and m.shl > 0:
         other = (
             "mul",
-            m.num + 2 ** m.shl,
+            m.num + 2**m.shl,
             ("mask_shl", m.size + m.shl, m.off, 0, m.val),
         )
 
@@ -1074,7 +1074,7 @@ def _try_add(self, other):
         )
         and mo.other_size == 256 - mo.shl
     ):
-        mo.mul *= 2 ** mo.shl - 1
+        mo.mul *= 2**mo.shl - 1
         return mul_op(mo.mul, ms.val)
 
     #    if self, other == mul(x, exp), mul(y, exp)
@@ -1133,10 +1133,10 @@ def _try_add(self, other):
                 256 - y,
                 y,
                 0,
-                ("add", 2 ** y - 1, ("mul", 1, x)),
+                ("add", 2**y - 1, ("mul", 1, x)),
             )  # - x #== 2**y-1 - Mask(y,0,0, x)
             if self[2] == m:
-                return mul_op(self[1], sub_op(2 ** y, mask_op(x, size=y)))
+                return mul_op(self[1], sub_op(2**y, mask_op(x, size=y)))
 
     #   if self, other == mul(-x, mask_shl(256-y, y, 0, exp),
     #                     mul(x, exp)

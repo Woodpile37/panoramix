@@ -1,3 +1,14 @@
+"""
+
+    This module displays expressions and traces in a human readable form.
+
+    It went through very many iterations, so it's a mess by now.
+
+    A lot of it can be easily refactored, so if you're looking for a place to contribute,
+    this may be it :)
+
+"""
+
 import logging
 import sys
 from copy import deepcopy
@@ -48,17 +59,18 @@ from panoramix.utils.signatures import get_param_name
 
 logger = logging.getLogger(__name__)
 
-"""
-
-    This module displays expressions and traces in a human readable form.
-
-    It went through very many iterations, so it's a mess by now.
-
-    A lot of it can be easily refactored, so if you're looking for a place to contribute,
-    this may be it :)
-
-"""
-
+PANIC_CODES = {
+    0x00: "Used for generic compiler inserted panics.",
+    0x01: "If you call assert with an argument that evaluates to false.",
+    0x11: "If an arithmetic operation results in underflow or overflow outside of an unchecked { ... } block.",
+    0x12: "If you divide or modulo by zero (e.g. 5 / 0 or 23 % 0).",
+    0x21: "If you convert a value that is too big or negative into an enum type.",
+    0x22: "If you access a storage byte array that is incorrectly encoded.",
+    0x31: "If you call .pop() on an empty array.",
+    0x32: "If you access an array, bytesN or an array slice at an out-of-bounds or negative index (i.e. x[i] where i >= x.length or i < 0).",
+    0x41: "If you allocate too much memory or create an array that is too large.",
+    0x51: "If you call a zero-initialized variable of internal function type.",
+}
 
 prev_trace = None
 
@@ -113,7 +125,7 @@ def format_exp(exp):
     if type(exp) == str:
         return f'"{exp}"'
     if type(exp) == int:
-        if exp > 10 ** 6 and exp % 10 ** 6 != 0:
+        if exp > 10**6 and exp % 10**6 != 0:
             return hex(exp)
         else:
             return str(exp)
@@ -148,7 +160,6 @@ def format_exp(exp):
 
 def pprint_repr(trace, indent=0):
     for line in trace:
-
         if opcode(line) == "if":
             cond, if_true, if_false = line[1:]
             print(indent * " ", f"[if, {format_exp(cond)}, [")
@@ -380,7 +391,6 @@ def pretty_line(r, add_color=True):
                 # breaks with more than one proper event
 
         res_events = tuple(pretty_fname(e, add_color=False, force=True) for e in events)
-        #        print(res_events)
         res_events = tuple((x[:10] if x[:2] == "0x" else x) for x in res_events)
         for e in res_events:
             if e.count("(") != 1:
@@ -420,10 +430,9 @@ def pretty_line(r, add_color=True):
                         ind = len(f"log   ")
                         first = p_list[0]
                         last = p_list[-1]
-                        pline = (
-                            lambda p: f"{p[0]} {p[1]}={pret(p[2], add_color=False, parentheses=False)}"
-                        )  # spaces around = not pep8 compliant
-                        # but without them it was less readable
+
+                        def pline(p):
+                            return f"{p[0]} {p[1]}={pret(p[2], add_color=False, parentheses=False)}"
 
                         yield col(f"log {fname}(", COLOR_GRAY)  #
                         yield col(f"      {pline(first)},", COLOR_GRAY)
@@ -452,7 +461,6 @@ def pretty_line(r, add_color=True):
         fparams = pretty_memory(fparams, add_color=add_color)
 
         if fname is not None:
-
             if type(fname) == str:
                 fname = pretty_fname(fname, add_color=add_color)
                 yield f"{COLOR_WARNING}codecall{ENDC} {addr}.{fname} with:"
@@ -484,7 +492,6 @@ def pretty_line(r, add_color=True):
         fparams = pretty_memory(fparams, add_color=add_color)
 
         if fname is not None:
-
             if type(fname) == str:
                 fname = pretty_fname(fname, add_color=add_color)
                 yield f"{COLOR_WARNING}delegate{ENDC} {addr}.{fname} with:"
@@ -591,7 +598,7 @@ def pretty_line(r, add_color=True):
             yield "       args {}".format(", ".join(fparams))
 
     elif m := match(r, ("label", ":name", ":setvars")):
-        yield COLOR_GREEN + f"loop {str(m.name)} setvars: {str(m.setvars)}" + ENDC
+        yield COLOR_GREEN + f"label {str(m.name)} setvars: {str(m.setvars)}" + ENDC
 
     elif opcode(r) == "goto":
         _, *rest = r
@@ -697,7 +704,14 @@ def pretty_line(r, add_color=True):
         res_mem = pretty_memory(param, add_color=True)
         ret_val = ", ".join(res_mem)
 
-        if len(clean_color(ret_val)) < 120 or opcode(param) != "data":
+        if m := match(r, ("revert", ("data", "'NH{q'", ":int:panic_code"))):
+            explanation = (
+                (f" {COLOR_GRAY}# " + PANIC_CODES[m.panic_code] + ENDC)
+                if m.panic_code in PANIC_CODES
+                else ""
+            )
+            yield f"{op} Panic({m.panic_code}) {explanation}"
+        elif len(clean_color(ret_val)) < 120 or opcode(param) != "data":
             yield f"{op} {ret_val}"
         else:
             # split long returns into lines. e.g. kitties.getKitten, or kitties.tokenMetadata
@@ -738,7 +752,6 @@ def pretty_line(r, add_color=True):
 
 
 def pretty_type(t):
-
     if m := match(t, ("def", ":name", ":loc", ("mask", ":size", ":off"))):
         return (
             pretty_type(("def", m.name, m.loc, m.size))
@@ -855,7 +868,7 @@ def pretty_num(exp, add_color):
         if exp - int(exp) == 0:
             exp = int(exp)
 
-    if type(exp) == int and exp > 8 ** 50:
+    if type(exp) == int and exp > 8**50:
         return hex(
             exp
         )  # dealing with binary data probably, usually in call code - display in hex
@@ -863,9 +876,8 @@ def pretty_num(exp, add_color):
     if type(exp) == int and exp != 0:
         count = 18
         while count >= 9:
-
-            if exp % (10 ** count) == 0:
-                if exp // (10 ** count) == 1:
+            if exp % (10**count) == 0:
+                if exp // (10**count) == 1:
                     return f"10^{count}"
                 else:
                     return f"{exp // (10**count)} * 10^{count}"
@@ -873,8 +885,8 @@ def pretty_num(exp, add_color):
             count -= 1
 
         count = 6
-        if exp % (10 ** count) == 0:
-            if exp // (10 ** count) == 1:
+        if exp % (10**count) == 0:
+            if exp // (10**count) == 1:
                 return f"10^{count}"
             else:
                 return f"{exp // (10**count)} * 10^{count}"
@@ -884,7 +896,7 @@ def pretty_num(exp, add_color):
             return try_fname(exp, add_color)
 
         elif (
-            type(exp) == int and (exp & 2 ** 256 - 1) < 8 ** 30
+            type(exp) == int and (exp & 2**256 - 1) < 8**30
         ):  # if it's larger than 30 bytes, it's probably
             # an address, not a negative number
             return str(to_real_int(exp))
@@ -900,7 +912,6 @@ def pretty_num(exp, add_color):
 
 
 def prettify(exp, rem_bool=False, parentheses=True, top_level=False, add_color=False):
-
     col = partial(colorize, add_color=add_color)
     pret = partial(prettify, add_color=add_color, parentheses=False)
 
@@ -983,6 +994,9 @@ def prettify(exp, rem_bool=False, parentheses=True, top_level=False, add_color=F
 
     if exp == "difficulty":
         return "block.difficulty"
+
+    if exp == "basefee":
+        return "block.basefee"
 
     if exp == "gasprice":
         return "block.gasprice"
@@ -1190,9 +1204,23 @@ def prettify(exp, rem_bool=False, parentheses=True, top_level=False, add_color=F
             elif exp[3] <= 8 and exp[3] >= -8:
                 return pret(("mul", val, 2 ** exp[3]), parentheses=parentheses)
             elif exp[3] > 0:
-                return pret(("shl", exp[3], val,), parentheses=parentheses)
+                return pret(
+                    (
+                        "shl",
+                        exp[3],
+                        val,
+                    ),
+                    parentheses=parentheses,
+                )
             else:
-                return pret(("shr", -exp[3], val,), parentheses=parentheses)
+                return pret(
+                    (
+                        "shr",
+                        -exp[3],
+                        val,
+                    ),
+                    parentheses=parentheses,
+                )
 
         if all_concrete(size, offset, shl, val):
             return pret(apply_mask(exp[4], exp[1], exp[2], exp[3]))
@@ -1201,7 +1229,6 @@ def prettify(exp, rem_bool=False, parentheses=True, top_level=False, add_color=F
             exp = ("mask", size, offset, val)
 
         elif safe_ge_zero(shl) is not False:
-
             if (
                 all_concrete(size, offset, shl)
                 and size + shl == 256
@@ -1247,7 +1274,7 @@ def prettify(exp, rem_bool=False, parentheses=True, top_level=False, add_color=F
     if m := match(exp, ("mask", ":size", ":offset", ":val")):
         size, offset, val = m.size, m.offset, m.val
         if type(size) == int and offset == 0 and size < 64:
-            return pret(("mod", val, 2 ** size), parentheses=parentheses)
+            return pret(("mod", val, 2**size), parentheses=parentheses)
         else:
             return "Mask({}, {}, {})".format(pret(size), pret(offset), pret(val))
 
@@ -1349,7 +1376,6 @@ def prettify(exp, rem_bool=False, parentheses=True, top_level=False, add_color=F
         return pret(m.a, parentheses=True) + "^" + pret(m.n, parentheses=True)
 
     if opcode(exp) in opcode_to_arithm:
-
         if opcode(exp) in ["shl", "shr"]:
             exp = exp[0], exp[2], exp[1]
 
@@ -1429,8 +1455,9 @@ def try_fname(exp, add_color=False):
 
 def pretty_fname(exp, add_color=False, force=False):
     if type(exp) == int:
-        if try_fname(exp) and "unknown_" not in try_fname(exp):
-            return try_fname(exp, add_color)
+        fname = try_fname(exp, add_color)
+        if fname and "unknown_" not in fname:
+            return fname
         else:
             return hex(exp)
 
@@ -1469,7 +1496,6 @@ def pretty_memory(exp, add_color=False):
     # merge things that look like string into a string
 
     while idx < len(exp):
-
         if (
             idx == 0
             and type(exp[0]) == tuple
@@ -1493,7 +1519,6 @@ def pretty_memory(exp, add_color=False):
         out_str = None
 
         if unmask(el) == 32 and len(exp) > idx + 1:
-
             length = unmask(exp[idx + 1])
             if type(length) == int:
                 byte_length = ((length - 1) >> 5) + 1

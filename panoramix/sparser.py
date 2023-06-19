@@ -136,10 +136,10 @@ def find_stores(exp):
 
 def rewrite_functions(functions):
     """
-        rewrites functions, putting storage names there,
-        then detects storage types and returns a list of those in a form of
-        ('def', name, loc, type)
-        that can be displayed by pretty_type from prettify
+    rewrites functions, putting storage names there,
+    then detects storage types and returns a list of those in a form of
+    ('def', name, loc, type)
+    that can be displayed by pretty_type from prettify
 
     """
 
@@ -327,7 +327,6 @@ def replace_names_in_assoc_bool(names, storages_assoc):
 
 def replace_names_in_assoc(names, storages_assoc):
     for pattern, name in names.items():
-
         if opcode(pattern) == "bool":
             continue
 
@@ -347,7 +346,6 @@ def replace_names_in_assoc(names, storages_assoc):
                 for pattern in storages_assoc
                 if get_loc(pattern) == num
             ):
-
                 used_locs.add(stor_id)
 
                 for src, pattern in storages_assoc.items():
@@ -359,7 +357,6 @@ def replace_names_in_assoc(names, storages_assoc):
             or (m := match(stor_id, ("stor", Any, Any, ("array", Any, ":loc"))))
             or (m := match(stor_id, ("struct", ":loc")))
         ):
-
             # for arrays, we don't want 'address' at the end of the name. looks better
             new_name = name.split("Address")[0]
             if len(new_name) > 0:
@@ -383,7 +380,6 @@ def replace_names_in_assoc(names, storages_assoc):
 
 
 def find_storage_names(functions):
-
     res = {}
 
     for func in functions:
@@ -394,27 +390,28 @@ def find_storage_names(functions):
 
             # func name into potential storage name
 
-            new_name = func.name
+            name = func.name
 
-            if new_name[:3] == "get" and len(new_name.split("(")[0]) > 3:
-                new_name = new_name[3:]
+            if name[:3] == "get" and len(name.split("(")[0]) > 3:
+                name = name[3:]
 
-            if new_name != new_name.upper():
+            if name != name.upper():
                 # otherwise we get stuff like bILLIONS in 0xF0160428a8552AC9bB7E050D90eEADE4DDD52843
-                new_name = new_name[0].lower() + new_name[1:]
+                name = name[0].lower() + name[1:]
 
-            new_name = new_name.split("(")[0]
+            name = name.split("(")[0]
 
             if match(getter, ("storage", 160, ...)):
                 if (
-                    ("address" not in new_name.lower())
-                    and ("addr" not in new_name.lower())
-                    and ("account" not in new_name.lower())
-                    and ("owner" not in new_name.lower())
+                    ("address" not in name.lower())
+                    and ("addr" not in name.lower())
+                    and ("account" not in name.lower())
+                    and ("owner" not in name.lower())
                 ):
-                    new_name += "Address"
+                    name += "Address"
 
-            res[getter] = new_name
+            logger.debug("found storage in function %s: %s %s", func.name, getter, name)
+            res[getter] = name
 
     return res
 
@@ -429,11 +426,11 @@ def mask_to_mul(exp):
         size, offset, shl, val = m.size, m.offset, m.shl, m.val
         if shl > 0 and offset == 0 and size == 256 - shl:
             if shl <= 8:
-                return ("mul", 2 ** shl, val)
+                return ("mul", 2**shl, val)
 
         if shl < 0 and offset == -shl and size == 256 - offset:
             if shl >= -8:
-                return ("div", 2 ** shl, val)
+                return ("div", 2**shl, val)
 
     return exp
 
@@ -459,9 +456,8 @@ def stor_replace_f(storages, f):
 
 
 def _sparser(orig_storages):
-
     storages = []
-    for idx, s in enumerate(orig_storages):
+    for s in orig_storages:
         storages.append(("stor",) + s[1:])
 
     def simplify_sha3(e):
@@ -498,7 +494,7 @@ def _sparser(orig_storages):
                     ":idx",
                 ),
             )
-        ) and m.size == 2 ** m.o_shl:
+        ) and m.size == 2**m.o_shl:
             size, o_size, o_off, o_shl, arr_idx, idx = (
                 m.size,
                 m.o_size,
@@ -618,7 +614,6 @@ def _sparser(orig_storages):
     """
     res = []
     for s in storages:
-
         if m := match(
             s, ("stor", ":size", ":off", ("range", ("array", ":beg", ":loc"), ":end"))
         ):

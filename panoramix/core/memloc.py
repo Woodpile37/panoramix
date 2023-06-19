@@ -2,7 +2,13 @@ import logging
 import sys
 
 from panoramix.matcher import Any, match
-from panoramix.utils.helpers import before_after, cached, contains, is_array, opcode, replace
+from panoramix.utils.helpers import (
+    cached,
+    contains,
+    is_array,
+    opcode,
+    replace,
+)
 
 from panoramix.core.algebra import (
     CannotCompare,
@@ -163,7 +169,13 @@ def split_or(value):
         else:
             value = mask_op(value, size=size, offset=offset, shl=shl)
 
-        ret_rows.append((stor_size, stor_offset, value,))
+        ret_rows.append(
+            (
+                stor_size,
+                stor_offset,
+                value,
+            )
+        )
 
     if len(ret_rows) == 2:
         """
@@ -247,7 +259,7 @@ def sizeof(exp):  # returns size of expression in *bits*
     #    if exp ~ ('bytes', :l, _):
     #        return bits(l)
 
-    if type(exp) == int and exp > 2 ** 256:
+    if type(exp) == int and exp > 2**256:
         return bits(
             ((exp).bit_length() + 7) // 8
         )  # number of bytes needed to contain the number, rounded up
@@ -270,7 +282,6 @@ def split_setmem(line):
     res = []
     for size, offset, split_val in post_split:
         try:
-
             split_idx = apply_mask_to_range(mem_idx, size, offset)
         except Exception:
             logger.exception("problem with split_setmem")
@@ -389,7 +400,7 @@ assert memloc_overwrite(("range", 64, "x"), ("range", 70, add_op("unknown", 100)
 def slice_exp(exp, left, right):
     size = sub_op(right, left)
 
-    logger.debug(f"slicing {exp}, offset {left} bytes, until {right} bytes")
+    logger.debug("slicing %s, offset %i bytes, until %i bytes", exp, left, right)
     # e.g. mem[32 len 10], 2, 4 == mem[34,2]
 
     if m := match(exp, ("mem", ("range", ":rleft", ":rlen"))):
@@ -405,12 +416,12 @@ def slice_exp(exp, left, right):
         else:
             return None
 
-    logger.debug(f"sizeof exp {sizeof(exp)}")
+    logger.debug("sizeof exp %i", sizeof(exp))
     off = sub_op(sizeof(exp), bits(right))
-    logger.debug(f"applying mask, size 8*{size}, offset {off}")
+    logger.debug("applying mask, size 8*%i, offset %i", size, off)
 
     m = mask_op(exp, size=bits(size), offset=off, shr=off)
-    logger.debug(f"result {m}")
+    logger.debug("result %s", m)
     return m
 
 
@@ -620,39 +631,7 @@ def replace_max_with_MAX(exp):
     return exp, res
 
 
-strict = "--strict" in sys.argv
-
-# @cached
-def fill_mem(exp, mem_idx, mem_val):
-
-    # speed - if exp contains a variable used in mem_idx
-    #         or mem_idx contains a variable not used in exp
-    #         there can be no match.
-    #
-    #         ugly, but shaves off 15% exec time
-    logger.debug(f"filling mem: {exp} with mem[{mem_idx}] == {mem_val}")
-
-    if (m := match(mem_idx, ("range", ("var", ":num"), Any))) and not contains(
-        exp, ("var", m.num)
-    ):
-        assert not strict
-        return exp
-
-    if (m := match(exp, ("mem", ("range", ("var", ":num"), Any)))) and not contains(
-        mem_idx, ("var", m.num)
-    ):
-        assert not strict
-        return exp
-
-    logger.debug("no speed improvements")
-
-    # /speed
-
-    f = _fill_mem(exp, mem_idx, mem_val)
-    return f
-
-
-def _fill_mem(exp, split, split_val):
+def fill_mem(exp, split, split_val):
     if exp == ("mem", split):
         return split_val
 
@@ -768,10 +747,7 @@ def range_overlaps(range1, range2):
             r1_begin, r1_end, r2_begin, r2_end = r2_begin, r2_end, r1_begin, r1_end
 
         # r1 begins before r2 for sure now
-        if le_op(r1_end, r2_begin) is True:
-            return False
-        else:
-            return True
+        return le_op(r1_end, r2_begin) is not True
 
     except CannotCompare:
         return None

@@ -7,12 +7,12 @@
 """
 from panoramix.core.algebra import minus_op
 from panoramix.utils.helpers import opcode
+from panoramix.matcher import match
 
 
 def cleanup_mul_1(trace):
     def cleanup_exp(exp):
         if type(exp) != tuple:
-
             return exp
 
         # mask_shl storage -> storage
@@ -50,7 +50,7 @@ def cleanup_mul_1(trace):
         if exp[:4] == ("mask_shl", 256, 0, 0):
             e = cleanup_exp(exp[4])
 
-            if type(e) == int and e < 0x100 ** 32:
+            if type(e) == int and e < 0x100**32:
                 return e
 
             if opcode(e) == "sha3":
@@ -64,13 +64,12 @@ def cleanup_mul_1(trace):
 
         if opcode(exp) == "mul" and exp[1] == 1:
             if len(exp) == 3:
-                assert False
                 return cleanup_exp(exp[2])
             else:
                 assert len(exp) > 3, exp
-                return ("mul",) + tuple([cleanup_exp(x) for x in exp[2:]])
+                return ("mul",) + tuple(cleanup_exp(x) for x in exp[2:])
 
-        return tuple([cleanup_exp(x) for x in exp])
+        return tuple(cleanup_exp(x) for x in exp)
 
     res = []
 

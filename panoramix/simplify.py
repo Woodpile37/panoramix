@@ -1,4 +1,5 @@
 import collections
+import time
 import logging
 import sys
 from copy import copy
@@ -81,7 +82,6 @@ from panoramix.postprocess import cleanup_mul_1
 from panoramix.rewriter import postprocess_exp, postprocess_trace, rewrite_string_stores
 
 logger = logging.getLogger(__name__)
-logger.level = logging.CRITICAL  # switch to INFO for detailed
 
 
 """
@@ -132,11 +132,18 @@ logger.level = logging.CRITICAL  # switch to INFO for detailed
 """
 
 
-def simplify_trace(trace):
+def simplify_trace(trace, timeout=0):
+    time_start = time.monotonic()
+
+    def should_quit():
+        q = timeout and (time.monotonic() - time_start > timeout)
+        if q:
+            logger.warning("simplify_trace timed out.")
+        return q
 
     old_trace = None
     count = 0
-    while trace != old_trace and count < 40:
+    while trace != old_trace and count < 40 and not should_quit():
         count += 1
 
         old_trace = trace
@@ -199,9 +206,9 @@ def simplify_trace(trace):
     trace = rewrite_trace_multiline(trace, rewrite_string_stores, 3)
     explain("using heuristics to clean up some things", trace)
 
-    trace = cleanup_mems(trace)
-    trace = cleanup_mems(trace)
-    trace = cleanup_mems(trace)
+    for _ in range(3):
+        trace = cleanup_mems(trace)
+
     trace = cleanup_conds(trace)
     explain("final setmem/condition cleanup", trace)
 
@@ -224,7 +231,6 @@ def simplify_trace(trace):
 
 @cached
 def simplify_exp(exp):
-
     if type(exp) == list:
         return exp
 
@@ -240,7 +246,7 @@ def simplify_exp(exp):
 
     if opcode(exp) == "and":
         _, *terms = exp
-        real = 2 ** 256 - 1
+        real = 2**256 - 1
         symbols = []
         for t in terms:
             if type(t) == int and t >= 0:
@@ -250,7 +256,7 @@ def simplify_exp(exp):
             else:
                 symbols.append(t)
 
-        if real != 2 ** 256 - 1:
+        if real != 2**256 - 1:
             res = (real,)
         else:
             res = tuple()
@@ -296,7 +302,21 @@ def simplify_exp(exp):
         and m.num > 32
     ):
         add_terms = exp[-1][2:]  # the "..."
-        exp = ("add", m.num // 32, ("mask_shl", 256, 5, 0, ("add", 31,) + add_terms))
+        exp = (
+            "add",
+            m.num // 32,
+            (
+                "mask_shl",
+                256,
+                5,
+                0,
+                (
+                    "add",
+                    31,
+                )
+                + add_terms,
+            ),
+        )
 
     if m := match(exp, ("iszero", ("mask_shl", ":size", ":off", ":shl", ":val"))):
         exp = ("iszero", ("mask_shl", m.size, m.off, 0, m.val))
@@ -314,7 +334,7 @@ def simplify_exp(exp):
     ):
         return mask_op(m.exp2, size=size)
 
-    if (m := match(exp, ("mod", 0, Any))) :
+    if m := match(exp, ("mod", 0, Any)):
         exp = 0
 
     # same thing is added in both expressions ?
@@ -473,7 +493,7 @@ def simplify_exp(exp):
         )
 
     if type(exp) == int and to_real_int(exp) > -(
-        8 ** 22
+        8**22
     ):  # if it's larger than 30 bytes, it's probably
         # an address, not a negative number
         return to_real_int(exp)
@@ -531,7 +551,7 @@ def simplify_exp(exp):
 def simplify_mask(exp):
     op = opcode(exp)
 
-    if op in arithmetic.opcodes:
+    if op in arithmetic.OPCODES:
         exp = arithmetic.eval(exp)
 
     if m := match(exp, ("and", ":left", ":right")):
@@ -672,7 +692,6 @@ def canonise_max(exp):
     if opcode(exp) == "max":
         args = []
         for e in exp[1:]:
-
             if m := match(e, ("mul", 1, ":num")):
                 args.append(m.num)
             else:
@@ -689,17 +708,16 @@ assert canonise_max(("max", ("mul", 1, ("x", "y")), 4)) == ("max", 4, ("x", "y")
 
 def readability(trace):
     """
-        - replaces variable names with nicer ones,
-        - fixes empty memory in calls
-        - replaces 'max..' in setmems with msize variable
-            (max can only appear because of this)
+    - replaces variable names with nicer ones,
+    - fixes empty memory in calls
+    - replaces 'max..' in setmems with msize variable
+        (max can only appear because of this)
     """
 
     trace = replace_f(trace, canonise_max)
 
     res = []
     for idx, line in enumerate(trace):
-
         if m := match(line, ("setmem", ("range", ("add", ...), Any), ":mem_val")):
             add_params = line[1][1][1:]  # the "..."
             for m in add_params:
@@ -962,7 +980,6 @@ def _loop_to_setmem(line):
 
         mem_idx_last = mem_idx
         for v_idx, v_val in endvars.items():
-
             mem_idx_last = replace(mem_idx_last, ("var", v_idx), v_val)
 
         mem_idx_first = mem_idx
@@ -1157,7 +1174,7 @@ def apply_constraint(exp, constr):
             if m := match(
                 x, ("mask_shl", ":int:size", 5, ":int:shl", ("add", 31, ":val"))
             ):
-                return ("add", 32 * (2 ** m.shl), ("mask_shl", m.size, 5, m.shl, m.val))
+                return ("add", 32 * (2**m.shl), ("mask_shl", m.size, 5, m.shl, m.val))
             if m := match(x, ("mask_shl", ":int:size", 5, 0, ":val")):
                 return ("mask_shl", m.size, 5, 0, m.val)
 
@@ -1185,8 +1202,8 @@ def apply_constraint(exp, constr):
 def cleanup_conds(trace):
     """
 
-        removes ifs/whiles with conditions that are obviously true
-        and replace variables that need to be equal to a constant by that constant
+    removes ifs/whiles with conditions that are obviously true
+    and replace variables that need to be equal to a constant by that constant
 
     """
 
@@ -1292,7 +1309,6 @@ def _eval_msize(cond):
     assert opcode(left) == "max"
 
     if opcode(cond) in ("lt", "le"):
-
         if opcode(cond) == "le":
             cond = ("lt", left, add_op(1, right))
             left, right = cond[1], cond[2]
@@ -1366,8 +1382,8 @@ def cleanup_msize(trace, current_msize=0):
 
 def overwrites_mem(line, mem_idx):
     """
-        for a given line, returns True if it potentially
-        overwrites *any part* of memory index, False if it *for sure* doesn't
+    for a given line, returns True if it potentially
+    overwrites *any part* of memory index, False if it *for sure* doesn't
 
     """
     if m := match(line, ("setmem", ":set_idx", Any)):
@@ -1437,12 +1453,11 @@ assert affects(line_test, exp_test) == True
 def trace_uses_mem(trace, mem_idx):
     """
 
-        checks if memory is used anywhere in the trace
+    checks if memory is used anywhere in the trace
 
     """
 
     for idx, line in enumerate(trace):
-
         if m := match(line, ("setmem", ":memloc", ":memval")):
             memloc, memval = m.memloc, m.memval
             memval = simplify_exp(memval)
@@ -1465,7 +1480,6 @@ def trace_uses_mem(trace, mem_idx):
                 return True
 
         elif m := match(line, ("if", ":cond", ":if_true", ":if_false")):
-
             if (
                 exp_uses_mem(m.cond, mem_idx)
                 or trace_uses_mem(m.if_true, mem_idx)
@@ -1483,14 +1497,12 @@ def trace_uses_mem(trace, mem_idx):
     return False
 
 
-def cleanup_mems(trace, in_loop=False):
+def cleanup_mems(trace):
     """
-        for every setmem, replace future occurences of it with it's value,
-        if possible
+    for every setmem, replace future occurences of it with it's value,
+    if possible
 
     """
-
-    # pprint_trace(trace)
 
     res = []
 
@@ -1510,12 +1522,15 @@ def cleanup_mems(trace, in_loop=False):
             mem_idx, mem_val = m.mem_idx, m.mem_val
 
             # find all the future occurences of var and replace if possible
-            if not affects(line, mem_val):
-                remaining_trace = replace_mem(trace[idx + 1 :], mem_idx, mem_val)
-            else:
+            if affects(line, mem_val):
                 remaining_trace = trace[idx + 1 :]
+            else:
+                # The following line is the cause for O(N^2) complexity,
+                # as here we iterate over the trace, and below we call `replace_mem`
+                # over everything that's left in the trace.
+                remaining_trace = replace_mem(trace[idx + 1 :], mem_idx, mem_val)
 
-            if in_loop or trace_uses_mem(remaining_trace, mem_idx):
+            if trace_uses_mem(remaining_trace, mem_idx):
                 res.append(line)
 
             res.extend(cleanup_mems(remaining_trace))
@@ -1525,7 +1540,14 @@ def cleanup_mems(trace, in_loop=False):
         elif opcode(line) == "while":
             _, cond, path, *rest = line
             path = cleanup_mems(path)
-            res.append(("while", cond, path,) + tuple(rest))
+            res.append(
+                (
+                    "while",
+                    cond,
+                    path,
+                )
+                + tuple(rest)
+            )
 
         elif opcode(line) == "if":
             _, cond, if_true, if_false = line
@@ -1552,7 +1574,6 @@ def replace_mem_exp(exp, mem_idx, mem_val):
         if m := match(
             res, ("delegatecall", ":gas", ":addr", ("mem", ":func"), ("mem", ":args"))
         ):
-            gas, addr = m.gas, m.addr
             op, f_begin, f_len = m.func
             assert op == "range"
             op, a_begin, a_len = m.args
@@ -1562,12 +1583,11 @@ def replace_mem_exp(exp, mem_idx, mem_val):
                 # let's merge those two memories, and try to replace with mem exp
                 res_range = simplify_exp(("range", f_begin, add_op(f_len, a_len)))
                 if res_range == mem_idx:
-                    res = ("delegatecall", gas, addr, None, mem_val)
+                    res = ("delegatecall", m.gas, m.addr, None, mem_val)
 
         if m := match(
             res, ("call", ":gas", ":addr", ":value", ("mem", ":func"), ("mem", ":args"))
         ):
-            gas, addr, value = m.gas, m.addr, m.value
             op, f_begin, f_len = m.func
             assert op == "range"
             op, a_begin, a_len = m.args
@@ -1577,7 +1597,7 @@ def replace_mem_exp(exp, mem_idx, mem_val):
                 # let's merge those two memories, and try to replace with mem exp
                 res_range = simplify_exp(("range", f_begin, add_op(f_len, a_len)))
                 if res_range == mem_idx:
-                    res = ("call", gas, addr, value, None, mem_val)
+                    res = ("call", m.gas, m.addr, m.value, None, mem_val)
 
     if res != exp:
         res = simplify_exp(res)
@@ -1592,26 +1612,26 @@ def replace_mem_exp(exp, mem_idx, mem_val):
 def replace_mem(trace, mem_idx, mem_val):
     """
 
-        replaces any reference to mem_idx in the trace
-        with a value of mem_val, up until a point of that mem being
-        overwritten
+    replaces any reference to mem_idx in the trace
+    with a value of mem_val, up until a point of that mem being
+    overwritten
 
-        mem[64] = 'X'
-        log mem[64]
-        mem[65] = 'Y'
-        log mem[64 len 1]
-        log mem[65]
-        mem[63] = 'Z'
-        ...
+    mem[64] = 'X'
+    log mem[64]
+    mem[65] = 'Y'
+    log mem[64 len 1]
+    log mem[65]
+    mem[63] = 'Z'
+    ...
 
-        into
+    into
 
-        mem[64] = 'X'
-        log 'X'
-        mem[65] = 'Y'
-        log mask(1, 'X')
-        log mem[65]
-        ... (the rest unchanged)
+    mem[64] = 'X'
+    log 'X'
+    mem[65] = 'Y'
+    log mask(1, 'X')
+    log mem[65]
+    ... (the rest unchanged)
 
     """
     mem_idx = simplify_exp(mem_idx)
@@ -1624,7 +1644,6 @@ def replace_mem(trace, mem_idx, mem_val):
     res = []
 
     for idx, line in enumerate(trace):
-
         if m := match(line, ("setmem", ":memloc", Any)):
             memloc = simplify_exp(m.memloc)
             # replace in val
@@ -1650,10 +1669,7 @@ def replace_mem(trace, mem_idx, mem_val):
             # shouldn't this go above the affects if above? and also update vars even if
             # the loops affects the memidx?
 
-            xx = []
-            for v in vars:
-                xx.append(replace_mem_exp(v, mem_idx, mem_val))
-            vars = xx
+            vars = [replace_mem_exp(v, mem_idx, mem_val) for v in vars]
 
             if not affects(line, ("mem", mem_idx)) and not affects(line, (mem_val)):
                 cond = replace_mem_exp(cond, mem_idx, mem_val)
@@ -1747,7 +1763,14 @@ def cleanup_vars(trace, required_after=None):
                 path,
                 required_after=required_after + find_op_list(trace[idx + 1 :], "var"),
             )
-            res.append(("while", cond, path,) + tuple(rest))
+            res.append(
+                (
+                    "while",
+                    cond,
+                    path,
+                )
+                + tuple(rest)
+            )
 
             a = parse_counters(line)
 
@@ -1778,7 +1801,7 @@ def cleanup_vars(trace, required_after=None):
 
 def replace_var(trace, var_idx, var_val):
     """
-        replace occurences of var, if possible
+    replace occurences of var, if possible
 
     """
 
@@ -1786,7 +1809,6 @@ def replace_var(trace, var_idx, var_val):
     res = []
 
     for idx, line in enumerate(trace):
-
         if m := match(line, ("setmem", ":mem_idx", Any)):
             # this all seems incorrect, (plus 'affects' checks below, needs to be revisited)
             # memloc = ("mem", m.mem_idx)
@@ -1935,7 +1957,6 @@ def normalize(cond):
 def find_setmems(trace):
     def check(line):
         if m := match(line, ("while", Any, ":path", ...)):
-
             sm = find_setmems(m.path)
             if len(sm) == 0:
                 return []
@@ -2139,7 +2160,6 @@ def while_uses_mem(line, mem_idx):
     mems_begin = mems_end = mems
 
     if "endvars" not in a:
-
         for s in mems:
             if range_overlaps(mem_idx, s[1]) is not False:
                 return True
@@ -2184,7 +2204,6 @@ def exp_uses_mem(exp, mem_idx):
 
 
 def parse_counters(line):
-
     a = {}
     op, cond, path, jds, setvars = line
     assert op == "while"

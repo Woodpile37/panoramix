@@ -21,7 +21,6 @@ def type_to_mask(s):
         "int128": 128,
         "uint128": 128,
         "bytes16": 128,
-        "addr": 160,
         "address": 160,
         "uint256": 256,
         "bytes32": 256,
@@ -48,7 +47,7 @@ def mask_to_type(num, force=False):
         32: "uint32",
         64: "uint64",
         128: "uint128",
-        160: "addr",
+        160: "address",
         256: "uint256",
     }
 
@@ -73,14 +72,14 @@ def mask_to_type(num, force=False):
 
 
 def get_bit(num, pos):
-    return 1 if num & 2 ** pos > 0 else 0
+    return 1 if num & 2**pos > 0 else 0
 
 
 def mask_to_int(size, offset):
     assert type(size) in (int, float), size
     assert type(offset) in (int, float), offset
 
-    return (2 ** size - 1) * (2 ** offset)
+    return (2**size - 1) * (2**offset)
 
 
 def find_mask(num):
@@ -129,7 +128,13 @@ def to_mask(num):
             return (mask_len, sub_op(256, mask_len))
 
     if opcode(num) == "add" and num[1] == -1:
-        return to_mask(("sub", num[2], 1,))
+        return to_mask(
+            (
+                "sub",
+                num[2],
+                1,
+            )
+        )
 
     if type(num) != int:
         return None

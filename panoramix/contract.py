@@ -89,8 +89,10 @@ class Contract:
         for func in self.functions:
 
             def replace_names(exp):
-                if (m := match(exp, ("cd", ":int:idx"))) and m.idx in func.params:
-                    return ("param", func.params[m.idx][1])
+                if (
+                    m := match(exp, ("cd", ":int:idx"))
+                ) and m.idx in func.inferred_params:
+                    return ("param", func.inferred_params[m.idx][1])
                 return exp
 
             func.trace = replace_f(func.trace, replace_names)
@@ -104,9 +106,9 @@ class Contract:
 
     def make_asts(self):
         """
-            we need to do ast creation from the contract, not function level,
-            because some simplifications (type/field removal) require insight to all the functions,
-            not just a single one
+        we need to do ast creation from the contract, not function level,
+        because some simplifications (type/field removal) require insight to all the functions,
+        not just a single one
         """
 
         for func in self.functions:
@@ -129,7 +131,6 @@ class Contract:
             stor_name_to_masks[get_name(mask)].add(mask)
 
         def cleanup(exp):
-
             if m := match(exp, ("field", 0, ("stor", ("length", ":idx")))):
                 return ("stor", ("length", m.idx))
 
@@ -151,10 +152,13 @@ class Contract:
             ):
                 e_type, e_field, e_name, loc = m.e_type, m.e_field, m.e_name, m.loc
                 for mask in stor_name_to_masks[e_name]:
-                    assert (
-                        get_loc(mask) == loc
-                    )  # otherwise, two locs with the same name?
-
+                    if get_loc(mask) != loc:
+                        logger.error(
+                            "Seems like we have two locations / storages with the same name: %s %s %s",
+                            mask,
+                            loc,
+                            get_loc(mask),
+                        )
                     assert (
                         m := match(
                             mask, ("type", ":m_type", ("field", ":m_field", Any))
@@ -232,7 +236,7 @@ class Contract:
                 ("array", ("mask_shl", ":size", ":off", ":int:shl", ":idx"), ":loc"),
             ):
                 size, off, shl, idx, loc = m.size, m.off, m.shl, m.idx, m.loc
-                r = 2 ** shl
+                r = 2**shl
                 e_loc = get_loc(loc)
 
                 for s in self.stor_defs:
@@ -300,7 +304,7 @@ class Contract:
                 and m.off in range(1, 9)
                 and m.size + m.off in [8, 16, 32, 64, 128, 256]
             ):
-                return ("div", ("mask", m.size + m.off, 0, m.e), 2 ** m.off)
+                return ("div", ("mask", m.size + m.off, 0, m.e), 2**m.off)
 
             elif exp == ("mask_shl", 32, 224, 0, ("cd", 0)):
                 return ("cd", 0)

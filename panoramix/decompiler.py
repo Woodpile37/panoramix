@@ -52,63 +52,62 @@ def decompile_address(address: str, only_func_name=None) -> Decompilation:
 
 
 def _decompile_with_loader(loader, only_func_name=None) -> Decompilation:
-
     """
 
-        But the main decompilation process looks like this:
+    But the main decompilation process looks like this:
 
-            loader = Loader()
-            loader.load(this_addr)
+        loader = Loader()
+        loader.load(this_addr)
 
-        loader.lines contains disassembled lines now
+    loader.lines contains disassembled lines now
 
-            loader.run(VM(loader, just_fdests=True))
+        loader.run(VM(loader, just_fdests=True))
 
-        After this, loader.func_list contains a list of functions and their locations in the contract.
-        Passing VM here is a pretty ugly hack, sorry about it.
+    After this, loader.func_list contains a list of functions and their locations in the contract.
+    Passing VM here is a pretty ugly hack, sorry about it.
 
-            trace = VM(loader).run(target)
+        trace = VM(loader).run(target)
 
-        Trace now contains the decompiled code, starting from target location.
-        you can do pprint_repr or pprint_logic to see how it looks
+    Trace now contains the decompiled code, starting from target location.
+    you can do pprint_repr or pprint_logic to see how it looks
 
-            trace = make_whiles(trace)
+        trace = make_whiles(trace)
 
-        This turns gotos into whiles
-        then it simplifies the code.
-        (should be two functions really)
+    This turns gotos into whiles
+    then it simplifies the code.
+    (should be two functions really)
 
-            functions[hash] = Function(hash, trace)
+        functions[hash] = Function(hash, trace)
 
-        Turns trace into a Function class.
-        Function class constructor figures out it's kind (e.g. read-only, getter, etc),
-        and some other things.
+    Turns trace into a Function class.
+    Function class constructor figures out it's kind (e.g. read-only, getter, etc),
+    and some other things.
 
-            contract = Contract(addr=this_addr,
-                                ver=VER,
-                                problems=problems,
-                                functions=functions)
+        contract = Contract(addr=this_addr,
+                            ver=VER,
+                            problems=problems,
+                            functions=functions)
 
-        Contract is a class containing all the contract decompiled functions and some other data.
+    Contract is a class containing all the contract decompiled functions and some other data.
 
-            contract.postprocess()
+        contract.postprocess()
 
-        Figures out storage structure (you have to do it for the whole contract at once, not function by function)
-        And folds the trace (that is, changes series of ifs into simpler forms)
+    Figures out storage structure (you have to do it for the whole contract at once, not function by function)
+    And folds the trace (that is, changes series of ifs into simpler forms)
 
-        Finally...
+    Finally...
 
-            loader.disasm() -- contains disassembled version
-            contract.json() -- contains json version of the contract
+        loader.disasm() -- contains disassembled version
+        contract.json() -- contains json version of the contract
 
-        Decompiled, human-readable version of the contract is done within this .py file,
-        starting from `with redirect_stdout...`
+    Decompiled, human-readable version of the contract is done within this .py file,
+    starting from `with redirect_stdout...`
 
 
-        To anyone going into this code:
-            - yes, it is chaotic
-            - yes, there are way too many interdependencies between some modules
-            - this is the first decompiler I've written in my life :)
+    To anyone going into this code:
+        - yes, it is chaotic
+        - yes, there are way too many interdependencies between some modules
+        - this is the first decompiler I've written in my life :)
 
     """
 
@@ -136,11 +135,11 @@ def _decompile_with_loader(loader, only_func_name=None) -> Decompilation:
     problems = {}
     functions = {}
 
-    for (hash, fname, target, stack) in loader.func_list:
+    for hash, fname, target, stack in loader.func_list:
         """
-            hash contains function hash
-            fname contains function name
-            target contains line# for the given function
+        hash contains function hash
+        fname contains function name
+        target contains line# for the given function
         """
 
         if only_func_name is not None and not fname.startswith(only_func_name):
@@ -148,7 +147,7 @@ def _decompile_with_loader(loader, only_func_name=None) -> Decompilation:
             # skip all the functions that are not it
             continue
 
-        logger.info("Parsing %s...", fname)
+        logger.info("Decompiling %s...", fname)
         logger.debug("stack %s", stack)
 
         try:
@@ -157,6 +156,7 @@ def _decompile_with_loader(loader, only_func_name=None) -> Decompilation:
 
             @timeout_decorator.timeout(60 * 3, timeout_exception=TimeoutInterrupt)
             def dec():
+                logger.info(" -> Interpreting EVM on function...")
                 trace = VM(loader).run(target, stack=stack, timeout=60)
                 explain("Initial decompiled trace", trace[1:])
 
@@ -166,7 +166,8 @@ def _decompile_with_loader(loader, only_func_name=None) -> Decompilation:
                     )
                     explain("Without assembly", trace)
 
-                trace = make_whiles(trace)
+                logger.info(" -> Cleaning up AST, identifying loops...")
+                trace = make_whiles(trace, timeout=60)
                 explain("final", trace)
 
                 if "--explain" in sys.argv:
@@ -175,16 +176,10 @@ def _decompile_with_loader(loader, only_func_name=None) -> Decompilation:
                 return trace
 
             trace = dec()
-
             functions[hash] = Function(hash, trace)
-
         except (Exception, TimeoutInterrupt):
             problems[hash] = fname
-
             logger.exception("Problem with %s%s", fname, C.end)
-
-            if "--strict" in sys.argv:
-                raise
 
     logger.info("Functions decompilation finished, now doing post-processing.")
 
@@ -194,7 +189,10 @@ def _decompile_with_loader(loader, only_func_name=None) -> Decompilation:
 
     """
 
-    contract = Contract(problems=problems, functions=functions,)
+    contract = Contract(
+        problems=problems,
+        functions=functions,
+    )
 
     contract.postprocess()
 
@@ -214,9 +212,8 @@ def _decompile_with_loader(loader, only_func_name=None) -> Decompilation:
 
     text_output = io.StringIO()
     with redirect_stdout(text_output):
-
         """
-            Print out decompilation header
+        Print out decompilation header
         """
 
         print(C.gray + "# Palkeoramix decompiler. " + C.end)

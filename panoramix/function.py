@@ -67,7 +67,8 @@ class Function(EasyCopy):
         self.trace = deepcopy(trace)
         self.orig_trace = deepcopy(self.trace)
 
-        self.params = self.make_params()
+        # A list of (kind, name)
+        self.inferred_params = self.make_params()
 
         if "unknown" in self.name:
             self.make_names()
@@ -85,13 +86,16 @@ class Function(EasyCopy):
         def rem_masks(exp):
             if m := match(exp, ("bool", ("cd", ":int:idx"))):
                 idx = m.idx
-                if idx in self.params and self.params[idx][0] == "bool":
+                if (
+                    idx in self.inferred_params
+                    and self.inferred_params[idx][0] == "bool"
+                ):
                     return ("cd", idx)
 
             elif m := match(exp, ("mask_shl", ":size", 0, 0, ("cd", ":int:idx"))):
                 size, idx = m.size, m.idx
-                if idx in self.params:
-                    kind = self.params[idx][0]
+                if idx in self.inferred_params:
+                    kind = self.inferred_params[idx][0]
                     def_size = type_to_mask(kind)
                     if size == def_size:
                         return ("cd", idx)
@@ -104,24 +108,25 @@ class Function(EasyCopy):
         new_name = self.name.split("(")[0]
 
         self.name = "{}({})".format(
-            new_name, ", ".join((p[0] + " " + p[1]) for p in self.params.values())
+            new_name,
+            ", ".join((p[0] + " " + p[1]) for p in self.inferred_params.values()),
         )
         self.color_name = "{}({})".format(
             new_name,
             ", ".join(
-                (p[0] + " " + COLOR_GREEN + p[1] + ENDC) for p in self.params.values()
+                (p[0] + " " + COLOR_GREEN + p[1] + ENDC)
+                for p in self.inferred_params.values()
             ),
         )
 
         self.abi_name = "{}({})".format(
-            new_name, ",".join(p[0] for p in self.params.values())
+            new_name, ",".join(p[0] for p in self.inferred_params.values())
         )
 
     def ast_length(self):
-        if self.trace is not None:
-            return len((self.print().split("\n"))), len(self.print())
-        else:
+        if self.trace is None:
             return 0, 0
+        return len((self.print().split("\n"))), len(self.print())
 
     def priority(self):
         # sorts functions in this order:
@@ -140,15 +145,15 @@ class Function(EasyCopy):
 
     def make_params(self):
         """
-            figures out parameter types from the decompiled function code.
+        figures out parameter types from the decompiled function code.
 
-            does so by looking at all 'cd'/calldata occurences and figuring out
-            how they are accessed - are they masked? are they used as pointers?
+        does so by looking at all 'cd'/calldata occurences and figuring out
+        how they are accessed - are they masked? are they used as pointers?
 
         """
 
         params = get_func_params(self.hash)
-        if len(params) > 0:
+        if params:
             res = {}
             idx = 4
             for p in params:
@@ -213,7 +218,6 @@ class Function(EasyCopy):
             res = {}
             count = 1
             for k in sizes:
-
                 if type(k) != int:
                     logger.warning(f"unusual calldata reference {k}")
                     return {}
@@ -251,7 +255,7 @@ class Function(EasyCopy):
             "payable": self.payable,
             "print": self.print(),
             "trace": trace,
-            "params": self.params,
+            "params": self.inferred_params,
         }
         try:
             assert json.dumps(res)  # check if serialisation works well
@@ -267,10 +271,9 @@ class Function(EasyCopy):
 
     def _print(self):
         set_func(self.hash)
-        set_func_params_if_none(self.params)
+        set_func_params_if_none(self.inferred_params)
 
         if self.const is not None:
-
             val = self.const
             if opcode(val) == "return":
                 val = val[1]
@@ -292,7 +295,7 @@ class Function(EasyCopy):
             if not self.payable:
                 comment = "# not payable"
 
-            if self.name == "_fallback()":
+            if self.name == "_fallback(?)":
                 if self.payable:
                     comment = "# default function"
                 else:
@@ -318,15 +321,15 @@ class Function(EasyCopy):
 
     def simplify_string_getter_from_storage(self):
         """
-            a heuristic for finding string getters and replacing them
-            with a simplified version
+        a heuristic for finding string getters and replacing them
+        with a simplified version
 
-            test cases: unicorn
-                        0xF7dF66B1D0203d362D7a3afBFd6728695Ae22619 name
-                        0xf8e386EDa857484f5a12e4B5DAa9984E06E73705 version
+        test cases: unicorn
+                    0xF7dF66B1D0203d362D7a3afBFd6728695Ae22619 name
+                    0xf8e386EDa857484f5a12e4B5DAa9984E06E73705 version
 
-            if you want to see how it works, turn this func off
-            and see how test cases decompile
+        if you want to see how it works, turn this func off
+        and see how test cases decompile
         """
 
         if not self.read_only:
